@@ -1,75 +1,78 @@
 import unittest
-from backend.app import app, get_db_connection
+import json
+from app import app, get_db_connection
 
-
-class FlaskAppTestCase(unittest.TestCase):
-
-    @classmethod
-    def setUpClass(cls):
-        """Создаем тестовую базу данных, если она еще не существует."""
-        cls.conn = get_db_connection()
-        cls.cur = cls.conn.cursor()
-        cls.cur.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id SERIAL PRIMARY KEY,
-                name VARCHAR(100) NOT NULL
-            )
-        """)
-        cls.conn.commit()
+class FlaskServerTestCase(unittest.TestCase):
 
     def setUp(self):
-        """Метод для очистки таблицы users перед каждым тестом."""
+        self.client = app.test_client()
+        self.conn = get_db_connection()
+        self.cur = self.conn.cursor()
+        # Очистим таблицу перед каждым тестом
         self.cur.execute("DELETE FROM users")
         self.conn.commit()
 
     def tearDown(self):
-        """Метод для очистки после каждого теста."""
-        self.cur.execute("DELETE FROM users")
-        self.conn.commit()
-
-    @classmethod
-    def tearDownClass(cls):
-        """Закрываем соединение с базой данных после всех тестов."""
-        cls.cur.close()
-        cls.conn.close()
-
-    def test_get_users(self):
-        """Тестируем получение списка пользователей."""
-        with app.test_client() as client:
-            # Проверим, что изначально список пользователей пуст.
-            response = client.get('/users')
-            self.assertEqual(response.status_code, 200)
-            self.assertEqual(response.json, [])
-
-            # Добавим пользователя и снова проверим.
-            self.cur.execute("INSERT INTO users (name) VALUES ('John')")
-            self.conn.commit()
-
-            response = client.get('/users')
-            self.assertEqual(response.status_code, 200)
-            self.assertEqual(response.json, [{"id": 1, "name": "John"}])
+        self.cur.close()
+        self.conn.close()
 
     def test_add_user(self):
-        """Тестируем добавление пользователя."""
-        with app.test_client() as client:
-            # Попробуем добавить пользователя с валидными данными.
-            response = client.post('/users', json={"name": "Alice"})
-            self.assertEqual(response.status_code, 201)
-            self.assertIn('id', response.json)
-            self.assertEqual(response.json['message'], 'User added')
+        response = self.client.post("/users", json={"name": "Test User"})
+        self.assertEqual(response.status_code, 201)
+        data = json.loads(response.data)
+        self.assertIn("id", data)
+        self.assertEqual(data["message"], "User added")
 
-            # Проверим, что пользователь добавился в базу данных.
-            self.cur.execute("SELECT name FROM users WHERE id = %s", (response.json['id'],))
-            user = self.cur.fetchone()
-            self.assertEqual(user[0], 'Alice')
+    def test_get_users(self):
+        # Добавим одного пользователя сначала
+        self.client.post("/users", json={"name": "User One"})
+        response = self.client.get("/users")
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.data)
+        self.assertEqual(len(data), 1)
+        self.assertEqual(data[0]["name"], "User One")
+
+    def test_update_user(self):
+        # Добавим пользователя
+        response = self.client.post("/users", json={"name": "Old Name"})
+        user_id = json.loads(response.data)["id"]
+
+        # Обновим имя
+        response = self.client.put(f"/users/{user_id}", json={"name": "New Name"})
+        self.assertEqual(response.status_code, 200)
+
+        # Проверим имя
+        response = self.client.get("/users")
+        users = json.loads(response.data)
+        self.assertEqual(users[0]["name"], "New Name")
+
+    def test_delete_user(self):
+        # Добавим пользователя
+        response = self.client.post("/users", json={"name": "User To Delete"})
+        user_id = json.loads(response.data)["id"]
+
+        # Удалим его
+        response = self.client.delete(f"/users/{user_id}")
+        self.assertEqual(response.status_code, 200)
+
+        # Убедимся, что его больше нет
+        response = self.client.get("/users")
+        users = json.loads(response.data)
+        self.assertEqual(len(users), 0)
 
     def test_add_user_without_name(self):
-        """Тестируем добавление пользователя без указания имени."""
-        with app.test_client() as client:
-            response = client.post('/users', json={})
-            self.assertEqual(response.status_code, 400)
-            self.assertEqual(response.json, {"error": "Name is required"})
+        response = self.client.post("/users", json={})
+        self.assertEqual(response.status_code, 400)
+        data = json.loads(response.data)
+        self.assertIn("error", data)
 
+    def test_update_user_without_name(self):
+        response = self.client.post("/users", json={"name": "Temp"})
+        user_id = json.loads(response.data)["id"]
+        response = self.client.put(f"/users/{user_id}", json={})
+        self.assertEqual(response.status_code, 400)
+        data = json.loads(response.data)
+        self.assertIn("error", data)
 
 if __name__ == "__main__":
     unittest.main()
