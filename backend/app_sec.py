@@ -6,7 +6,7 @@ from backend.database import create_table, get_all_users, add_user
 app = Flask(__name__)
 CORS(app)
 
-# Инициализируем таблицу при запуске сервера
+
 create_table()
 
 @app.route("/users", methods=["GET"])
